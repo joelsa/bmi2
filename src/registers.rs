@@ -16,6 +16,8 @@ impl Registers {
     pub const TEMPERATURE_0: u8 = 0x22;
     pub const FIFO_LENGTH_0: u8 = 0x24;
     pub const FIFO_DATA: u8 = 0x26;
+    pub const FEAT_PAGE: u8 = 0x2F;
+    pub const FEATURES: u8 = 0x30;
     pub const ACC_CONF: u8 = 0x40;
     pub const ACC_RANGE: u8 = 0x41;
     pub const GYR_CONF: u8 = 0x42;

@@ -5,6 +5,11 @@ pub enum Error<CommE> {
     Comm(CommE),
     /// Memory allocation error during initialization.
     Alloc,
+    InvalidChipId,
+    InvalidConfigLength,
+    InitTimeout,
+    ConfigVerifyFailed,
+    InternalError(u8),
 }
 
 /// Data burst.
@@ -25,7 +30,7 @@ impl Burst {
     pub fn val(self) -> u16 {
         match self {
             Burst::Max => 512,
-            Burst::Other(v) => v % 512,
+            Burst::Other(v) => v,
         }
     }
 }

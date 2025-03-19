@@ -1,3 +1,4 @@
+use embedded_hal::delay::DelayNs;
 use fixedvec::FixedVec;
 
 use crate::interface::{I2cAddr, I2cInterface, ReadData, SpiInterface, WriteData};
@@ -185,6 +186,29 @@ where
         Ok(len)
     }
 
+    /// Get the FEAT_PAGE register.
+    pub fn get_feat_page(&mut self) -> Result<u8, Error<CommE>> {
+        let feat_page = self.iface.read_reg(Registers::FEAT_PAGE)?;
+        Ok(feat_page)
+    }
+
+    /// Set the FEAT_PAGE register.
+    pub fn set_feat_page(&mut self, feat_page: u8) -> Result<(), Error<CommE>> {
+        self.iface.write_reg(Registers::FEAT_PAGE, feat_page)?;
+        Ok(())
+    }
+
+    /// Get the FEATURES register
+    pub fn get_features(&mut self) -> Result<[u8; 17], Error <CommE>> {
+        let mut payload = [Registers::FEATURES, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        self.iface.read(&mut payload)?;
+        Ok(payload)
+    }
+
+    /// Set the FEATURES register
+    /// TODO
+
+    /// Get Fifo data.
     pub fn get_fifo_data(&mut self) -> Result<(), Error<CommE>> {
         // TODO Fifo is 6KB, will need the max read info from user + fifo config
         Ok(())
@@ -704,45 +728,158 @@ where
     }
 
     /// Initialize sensor.
-    pub fn init(&mut self, config_file: &[u8]) -> Result<(), Error<CommE>> {
+    pub fn init<D>(&mut self, config_file: &[u8], delay: &mut D) -> Result<(), Error<CommE>>
+        where 
+        D: DelayNs,
+    {
+        // Verify chip ID first
+        let chip_id = self.iface.read_reg(Registers::CHIP_ID)?;
+        if chip_id != 0x24 {
+            return Err(Error::InvalidChipId);
+        }
 
+        // Reset Chip
+        self.send_cmd(Cmd::SoftReset)?;
+        delay.delay_us(2000);
+        
+        // Verify config file length
+        if config_file.len() != 8192 {
+            return Err(Error::InvalidConfigLength);
+        }
+        
         // Disable advanced power mode
         let mut pwr_conf = self.get_pwr_conf()?;
         pwr_conf.power_save = false;
+        pwr_conf.fifo_self_wake_up = true;
         self.set_pwr_conf(pwr_conf)?;
+        
 
-        // TODO allow config of pre alloc
-        let mut preallocated_space = alloc_stack!([u8; 512]);
+        // // Read Internal Status
+        // let int_status = self.get_internal_status()?;
+        // println!("INTERNAL_STATUS: 0b{:08b}", int_status.message as u8);
+    
+        // // Read Error Reg
+        // let error_reg = self.get_errors()?;
+        // println!("ERRORS: Internal: 0b{:08b}, Fatal Errors: {:?}", error_reg.internal_err.clone(), error_reg.fatal_err);
+    
+        // // Read Internal Error Reg
+        // let internal_error_reg = self.get_internal_error()?;
+        // println!("INTERNAL_ERROR: {:?}, {:?}, {:?}", internal_error_reg.int_err_1.clone(), internal_error_reg.int_err_2.clone(), internal_error_reg.feat_eng_dis.clone());  
+    
+
+        // Critical delay after disabling power save
+        delay.delay_us(450);
+        
+        // Memory Allocation
+        let mut preallocated_space = alloc_stack!([u8; 10000]);
         let mut vec = FixedVec::new(&mut preallocated_space);
-
+        
         let mut offset = 0u16;
         let max_len = config_file.len() as u16;
-        let burst = self.max_burst - 1; // Remove 1 for address byte
+        let burst = if self.max_burst % 2 == 0 {
+            self.max_burst - 1  // Address byte + even number of data bytes
+        } else {
+            self.max_burst - 2  // Make sure we have even data bytes
+        };
+        
+        let init_ctrl= self.get_init_ctrl()?;
+        self.set_init_ctrl(init_ctrl & 0b1111_1110)?;
+        delay.delay_us(450);   
 
-        self.set_init_ctrl(0)?;
-
+        // // Read Internal Error Reg
+        // let internal_error_reg = self.get_internal_error()?;
+        // println!("INTERNAL_ERROR: {:?}, {:?}, {:?}", internal_error_reg.int_err_1.clone(), internal_error_reg.int_err_2.clone(), internal_error_reg.feat_eng_dis.clone());  
+    
+        
         while offset < max_len {
-            self.set_init_addr(offset / 2)?;
-
-            let end = if (offset + burst) > max_len {
-                max_len
+            // INIT_ADDR should point to 16-bit words
+            self.set_init_addr(offset / 2)?;  // This is correct as we're already dividing by 2
+            
+            // Ensure we're writing complete 16-bit words
+            let mut chunk_size = burst;
+            if (chunk_size % 2) != 0 {
+                // If burst size would result in odd number of bytes, reduce by 1
+                chunk_size -= 1;
+            }
+            
+            let end = if (offset + chunk_size) > max_len {
+                // For the last chunk, ensure we still write complete 16-bit words
+                let remaining = max_len - offset;
+                offset + (remaining - (remaining % 2))
             } else {
-                offset + burst
+                offset + chunk_size
             };
-
+            
+            vec.clear();
             vec.push(Registers::INIT_DATA)
                 .map_err(|_| Error::<CommE>::Alloc)?;
-
+            
             vec.push_all(&config_file[offset as usize..end as usize])
                 .map_err(|_| Error::<CommE>::Alloc)?;
-
+            
             self.iface.write(&mut vec.as_mut_slice())?;
-
-            offset += burst;
-            vec.clear();
+            
+            offset += chunk_size;
+            delay.delay_us(2);
         }
 
+        // Verfiy correct config file was written
+        // let mut read_config_file = [0_u8; 8193];
+        // self.set_init_addr(0)?;  // Go back to the beginning
+        // read_config_file[0] = Registers::INIT_DATA;
+        // self.iface.read(&mut read_config_file)?;
+        // if read_config_file[1..] != config_file[..] {
+        //     println!("Config file verification failed");
+        //     print!("{:?}", read_config_file);
+        //     return Err(Error::ConfigVerifyFailed);
+        // }
+        delay.delay_us(2);
+
+        let init_ctrl = self.get_init_ctrl()?;
+        println!("INIT_CTRL: 0b{:08b}", init_ctrl);
+        
         self.set_init_ctrl(1)?;
+        delay.delay_us(2);
+
+        let mut pwr_conf = self.get_pwr_conf()?;
+        pwr_conf.power_save = true;
+        pwr_conf.fifo_self_wake_up = true;
+        self.set_pwr_conf(pwr_conf)?;
+        delay.delay_us(450);
+
+            
+        // Read Internal Error Reg
+        // let internal_error_reg = self.get_internal_error()?;
+        // println!("INTERNAL_ERROR: {:?}, {:?}, {:?}", internal_error_reg.int_err_1.clone(), internal_error_reg.int_err_2.clone(), internal_error_reg.feat_eng_dis.clone());  
+    
+        delay.delay_us(20000);
+
+        // let internal_error_reg = self.get_internal_error()?;
+        // println!("After Wait: INTERNAL_ERROR: {:?}, {:?}, {:?}", internal_error_reg.int_err_1.clone(), internal_error_reg.int_err_2.clone(), internal_error_reg.feat_eng_dis.clone());  
+    
+        // println!("Reading Status");
+        // delay.delay_us(450);
+
+
+        
+        let _status = self.iface.read_reg(Registers::INTERNAL_STATUS)?;
+
+        let mut pwr_conf = self.get_pwr_conf()?;
+        delay.delay_us(450);
+        pwr_conf.power_save = false;
+        pwr_conf.fifo_self_wake_up = true;
+        self.set_pwr_conf(pwr_conf)?;
+        delay.delay_us(450);
+
+        self.set_feat_page(0)?;
+        let _features = self.get_features()?;
+
+        let mut pwr_conf = self.get_pwr_conf()?;
+        pwr_conf.power_save = true;
+        pwr_conf.fifo_self_wake_up = true;
+        self.set_pwr_conf(pwr_conf)?;
+        delay.delay_us(450);
+
 
         Ok(())
     }
