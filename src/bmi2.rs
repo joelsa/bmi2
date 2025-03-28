@@ -548,8 +548,8 @@ where
     }
 
     /// Set NVM configuration.
-    pub fn set_nvm_conf(&mut self, gyr_crt_conf: bool) -> Result<(), Error<CommE>> {
-        let value: u8 = if gyr_crt_conf { 0x01 } else { 0x00 };
+    pub fn set_nvm_conf(&mut self, nvm_prog_en: bool) -> Result<(), Error<CommE>> {
+        let value: u8 = if nvm_prog_en { 0x01 } else { 0x00 };
         self.iface.write_reg(Registers::NVM_CONF, value << 1)?;
         Ok(())
     }
@@ -609,6 +609,18 @@ where
     /// Set NV configuration.
     pub fn set_nv_conf(&mut self, nv_conf: NvConf) -> Result<(), Error<CommE>> {
         self.iface.write_reg(Registers::NV_CONF, nv_conf.to_reg())?;
+        Ok(())
+    }
+
+    /// Prepare NVM programming
+    pub fn nvm_prog_prep(&mut self) -> Result<(), Error<CommE>> {
+
+        let mut val = self.iface.read_reg(Registers::GEN_SET_2)?;
+        val = val | 0b0000_00100;
+        self.iface.write_reg(Registers::GEN_SET_2, val)?;
+
+        self.delay.delay_ms(40);
+
         Ok(())
     }
 
@@ -707,6 +719,20 @@ where
         Ok(())
     }
 
+    /// Enable in-use offset compensation
+    pub fn enable_in_use_off_comp(&mut self) -> Result<(), Error<CommE>> {
+
+        let mut val = self.iface.read_reg(Registers::GEN_SET_2)?;
+        val = val | 0b0000_00010;
+        self.iface.write_reg(Registers::GEN_SET_2, val)?;
+
+        val = self.iface.read_reg(Registers::OFFSET_6)?;
+        val = val | 0b0100_00000;
+        self.iface.write_reg(Registers::OFFSET_6, val)?;
+        
+        Ok(())
+    }
+
     /// Disable power save mode.
     pub fn disable_power_save(&mut self) -> Result<(), Error<CommE>> {
         let mut pwr_conf = self.get_pwr_conf()?;
@@ -726,7 +752,6 @@ where
         self.delay.delay_us(450);
         Ok(())
     }
-
 
     /// Initialize sensor.
     pub fn init(&mut self, config_file: &[u8]) -> Result<(), Error<CommE>> {

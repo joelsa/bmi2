@@ -17,6 +17,9 @@ impl Registers {
     pub const FIFO_LENGTH_0: u8 = 0x24;
     #[allow(dead_code)]
     pub const FIFO_DATA: u8 = 0x26;
+    #[allow(dead_code)]
+    pub const GEN_SET_1: u8 = 0x34;
+    pub const GEN_SET_2: u8 = 0x35;
     pub const ACC_CONF: u8 = 0x40;
     pub const ACC_RANGE: u8 = 0x41;
     pub const GYR_CONF: u8 = 0x42;
@@ -52,6 +55,7 @@ impl Registers {
     pub const NV_CONF: u8 = 0x70;
     pub const OFFSET_0: u8 = 0x71;
     pub const OFFSET_3: u8 = 0x74;
+    pub const OFFSET_6: u8 = 0x77;
     pub const PWR_CONF: u8 = 0x7C;
     pub const PWR_CTRL: u8 = 0x7D;
     pub const CMD: u8 = 0x7E;
